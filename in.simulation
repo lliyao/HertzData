@@ -1,0 +1,96 @@
+units lj
+atom_style sphere
+dimension   2
+boundary p p p
+variable SEED equal 42736
+
+variable particle_number equal 1267
+variable alpha equal 2.2
+variable rho equal 2.9
+variable kn equal 2.0*${alpha}
+variable L equal sqrt(${particle_number}/${rho})
+variable Tem0 equal 0.1
+
+
+region box block 0 ${L}  0 ${L} -0.5 0.5
+create_box 1 box
+create_atoms  1 random ${particle_number} ${SEED} box
+group type1 type 1
+set type 1 mass 1.0
+set type 1 diameter  1.0 #${diameter}
+
+timestep 0.01
+
+neighbor 0.3 bin
+neigh_modify every 1 delay 0 check yes
+
+velocity    all create 0.1 ${SEED} loop geom
+comm_modify vel yes
+pair_style      gran/hertz/history/energy/alpha ${kn} 0 0 0 0 0 ${alpha}
+        # 0.1878287 0 0 0 0 0 #SQ
+                #0.135997756 0 0 0 0 0 #DDQC
+
+                #${kn} ${kt} ${gamma_n} ${gamma_t} ${coeffFric} 1
+                #kn = 1/ (diameter^3/2)
+
+pair_coeff      * *
+
+compute phi60 type1 hexorder/atom degree 6 nnn 6 cutoff 1.0
+compute phi40 type1 hexorder/atom degree 4 nnn 4 cutoff 1.0
+compute phi50 type1 hexorder/atom degree 5 nnn 5 cutoff 1.0
+
+variable phi6 atom sqrt(c_phi60[1]^2+c_phi60[2]^2)
+variable phi4 atom sqrt(c_phi40[1]^2+c_phi40[2]^2)
+variable phi5 atom sqrt(c_phi50[1]^2+c_phi50[2]^2)
+
+compute globphi6 type1 reduce ave v_phi6
+compute globphi4 type1 reduce ave v_phi4
+compute globphi5 type1 reduce ave v_phi5
+
+variable globphi6 equal c_globphi6
+variable globphi4 equal c_globphi4
+variable globphi5 equal c_globphi5
+
+
+dump   1 all custom 1000000 dump.xyz id type x y z v_phi4 v_phi5 v_phi6 
+thermo 6000000
+thermo_style custom step time  temp  density pe  #v_globphi4 v_globphi5 v_globphi6 
+
+
+fix 1 type1 langevin 0.1 0.1 $(100*dt) ${SEED} gjf vhalf
+fix 2 type1 nve
+fix 2d all enforce2d
+unfix 1
+unfix 2
+unfix 2d
+reset_timestep 0
+
+
+
+variable N equal 30000
+variable iloop loop ${N}
+#variable Tnow equal ${Tem0}
+
+label  loop
+    variable        seed2 equal floor(random(1,100000,${SEED}))
+    variable        Tnow equal  ${Tem0}*exp(-0.0003*v_iloop)
+
+    print "#iloop ${iloop} ${Tnow}"
+
+    fix  l1 all langevin v_Tnow 1 $(100*dt) ${seed2} gjf vhalf
+    fix  l2 all nve
+    fix  l3 all enforce2d
+    run  20000
+    unfix l1
+    unfix l2
+    unfix l3
+next    iloop
+jump    SELF loop
+
+
+fix 1 type1 langevin 0 0 $(100*dt) ${SEED} gjf vhalf
+fix 2 type1 nve
+fix 3 type1 enforce2d
+
+minimize        1.0e-8 0.00001 10000 100000
+
